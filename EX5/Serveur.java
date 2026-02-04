@@ -1,7 +1,5 @@
 import java.io.*;
 import java.net.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 
 public class Serveur {
     private static final int PORT = 8080;
@@ -13,10 +11,8 @@ public class Serveur {
             while (true) {
                 System.out.println("En attente de connexion...");
                 
-                
                 Socket clientSocket = serverSocket.accept();
                 System.out.println("Client connecté: " + clientSocket.getInetAddress());
-                
                 
                 handleClient(clientSocket);
             }
@@ -26,13 +22,17 @@ public class Serveur {
     }
     
     private static void handleClient(Socket clientSocket) {
-        try (PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
-            LocalDateTime now = LocalDateTime.now();
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
-            String heure = now.format(formatter);
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+             PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
             
-            out.println(heure);
-            System.out.println("Heure envoyée au client: " + heure);
+            String line;
+            while ((line = in.readLine()) != null) {
+                String transformedLine = line.toUpperCase();
+                System.out.println("Ligne reçue: " + line);
+                
+                out.println(transformedLine);
+                System.out.println("Ligne transformée envoyée au client: " + transformedLine);
+            }
             
         } catch (IOException e) {
             System.err.println("Erreur lors de la communication avec le client: " + e.getMessage());
