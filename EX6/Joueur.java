@@ -71,11 +71,17 @@ public class Joueur extends Thread {
                                 adversaire.envoyerMessage("DEFEAT:" + jeu.getPlateau());
                                 actif = false;
                                 adversaire.arreter();
+                                // Fermer les connexions
+                                fermerConnexion();
+                                adversaire.fermerConnexion();
                             } else if (jeu.plateauPlein()) {
                                 envoyerMessage("DRAW:" + jeu.getPlateau());
                                 adversaire.envoyerMessage("DRAW:" + jeu.getPlateau());
                                 actif = false;
                                 adversaire.arreter();
+                                // Fermer les connexions
+                                fermerConnexion();
+                                adversaire.fermerConnexion();
                             } else {
                                 monTour = false;
                                 adversaire.monTour = true;
@@ -126,5 +132,18 @@ public class Joueur extends Thread {
      */
     public void arreter() {
         actif = false;
+    }
+    
+    /**
+     * Ferme la connexion du joueur
+     */
+    public void fermerConnexion() {
+        try {
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+            }
+        } catch (IOException e) {
+            System.out.println("Erreur lors de la fermeture de la connexion: " + e.getMessage());
+        }
     }
 }

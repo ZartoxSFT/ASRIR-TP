@@ -155,6 +155,8 @@ public class Client {
             afficherPlateau();
             System.out.println("\n*** VOUS AVEZ GAGNÉ! ***");
             monTour = false;
+            System.out.println("Déconnexion du serveur...");
+            System.exit(0);
             
         } else if (message.startsWith("DEFEAT:")) {
             String plateauStr = message.substring(7);
@@ -162,6 +164,8 @@ public class Client {
             afficherPlateau();
             System.out.println("\n*** VOUS AVEZ PERDU! ***");
             monTour = false;
+            System.out.println("Déconnexion du serveur...");
+            System.exit(0);
             
         } else if (message.startsWith("DRAW:")) {
             String plateauStr = message.substring(5);
@@ -169,11 +173,15 @@ public class Client {
             afficherPlateau();
             System.out.println("\n*** ÉGALITÉ! ***");
             monTour = false;
+            System.out.println("Déconnexion du serveur...");
+            System.exit(0);
             
         } else if (message.startsWith("OPPONENT_DISCONNECTED")) {
             System.out.println("\n*** L'ADVERSAIRE S'EST DÉCONNECTÉ ***");
             System.out.println("Partie terminée.");
             monTour = false;
+            System.out.println("Déconnexion du serveur...");
+            System.exit(0);
         }
     }
 }
