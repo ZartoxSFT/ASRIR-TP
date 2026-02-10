@@ -3,7 +3,7 @@ import java.net.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-public class Serveur {
+public class Server {
     private static final int PORT = 8080;
     
     public static void main(String[] args) {
@@ -17,15 +17,18 @@ public class Serveur {
                 Socket clientSocket = serverSocket.accept();
                 System.out.println("Client connecté: " + clientSocket.getInetAddress());
                 
-                
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
+
                 handleClient(clientSocket);
             }
         } catch (IOException e) {
             System.err.println("Erreur serveur: " + e.getMessage());
         }
     }
-    
-    private static void handleClient(Socket clientSocket) {
+}
+
+
+private static void handleClient(Socket clientSocket) {
         try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
              PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
             
@@ -34,25 +37,7 @@ public class Serveur {
                 command = command.trim().toUpperCase();
                 System.out.println("Commande reçue: " + command);
                 
-                if (command.equals("CLOSE")) {
-                    System.out.println("Client demande la fermeture de la connexion.");
-                    break;
-                } else if (command.equals("DATE")) {
-                    String date = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-                    out.println(date);
-                    System.out.println("Date envoyée au client: " + date);
-                } else if (command.equals("HOUR")) {
-                    String heure = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-                    out.println(heure);
-                    System.out.println("Heure envoyée au client: " + heure);
-                } else if (command.equals("FULL")) {
-                    String full = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"));
-                    out.println(full);
-                    System.out.println("Date et heure envoyées au client: " + full);
-                } else {
-                    out.println("ERREUR: Commande non reconnue. Utilisez DATE, HOUR, FULL ou CLOSE.");
-                    System.out.println("Commande non valide reçue: " + command);
-                }
+                
             }
             
         } catch (IOException e) {
