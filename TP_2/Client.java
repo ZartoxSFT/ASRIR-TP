@@ -18,8 +18,8 @@ public class Client {
             while (true) {
                 System.out.print("Entrez une commande: ");
                 command = scan.nextLine().trim();
-                
-                out.write(command);
+
+                out.println(command);
 
             }
             
