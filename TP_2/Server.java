@@ -156,8 +156,31 @@ public class Server {
                             File dir = new File(".");
                             File[] files = dir.listFiles();
                             if (files != null) {
+                                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MMM dd HH:mm");
                                 for (File file : files) {
-                                    dataOut.println(file.getName());
+                                    // Permissions
+                                    String permissions = file.isDirectory() ? "d" : "-";
+                                    permissions += file.canRead() ? "r" : "-";
+                                    permissions += file.canWrite() ? "w" : "-";
+                                    permissions += file.canExecute() ? "x" : "-";
+                                    permissions += "------"; // Autres permissions simplifiées
+                                    
+                                    // Taille
+                                    String size = String.format("%10d", file.length());
+                                    
+                                    // Date de modification
+                                    LocalDateTime dateTime = LocalDateTime.ofInstant(
+                                        java.time.Instant.ofEpochMilli(file.lastModified()),
+                                        java.time.ZoneId.systemDefault()
+                                    );
+                                    String date = dateTime.format(formatter);
+                                    
+                                    // Nom
+                                    String name = file.getName();
+                                    
+                                    // Format: permissions taille date nom
+                                    String lined = String.format("%s %s %s %s", permissions, size, date, name);
+                                    dataOut.println(lined);
                                 }
                             }
                             out.println("226 Transfert termine.");

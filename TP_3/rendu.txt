@@ -1,0 +1,8 @@
+1)
+Requete GET pour https://perdu.com/
+Requete GET pour https://perdu.com/favicon.ico
+
+200 OK Requete reussi
+404 Not Found Page non trouvé
+418 I'm a teapot Code humoristique
+502 Bad Gateway Mauvaise réponse du serveur intérmediaire
