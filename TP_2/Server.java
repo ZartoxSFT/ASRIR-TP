@@ -110,7 +110,31 @@ public class Server {
                             out.println("425 Impossible d'ouvrir la connexion de donnees.");
                         }
                         break;
-                    case "PASV":
+                    case "QUIT":
+                        out.println("221 Deconnexion. Fermeture de la connexion.");
+
+                        isAuthenticated = false;
+                        username = null;
+
+                        // Fermeture des sockets de données si ouvertes
+                        if (dataSocket != null && !dataSocket.isClosed()) {
+                            try {
+                                dataSocket.close();
+                            } catch (IOException e) {
+                                System.err.println("Erreur fermeture dataSocket: " + e.getMessage());
+                            }
+                        }
+
+                        if (passiveServer != null && !passiveServer.isClosed()) {
+                            try {
+                                passiveServer.close();
+                            } catch (IOException e) {
+                                System.err.println("Erreur fermeture passiveServer: " + e.getMessage());
+                            }
+                        }
+
+                        return;
+                                        case "PASV":
                         try {
                             if (passiveServer != null && !passiveServer.isClosed()) {
                                 passiveServer.close();
