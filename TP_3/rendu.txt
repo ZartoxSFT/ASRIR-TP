@@ -1,4 +1,4 @@
-1)
+EX 1)
 Requete GET pour https://perdu.com/
 Requete GET pour https://perdu.com/favicon.ico
 
@@ -6,3 +6,58 @@ Requete GET pour https://perdu.com/favicon.ico
 404 Not Found Page non trouvé
 418 I'm a teapot Code humoristique
 502 Bad Gateway Mauvaise réponse du serveur intérmediaire
+
+EX 2)
+
+GET /
+
+Réponse : 
+Cloudflare encountered an error processing this request: Bad RequestConnection closed by foreign host.
+
+Explication : Bad Request car mauvais format
+
+GET / HTTP/1.1\
+Réponse :
+
+HTTP/1.1 400 Bad Request
+Server: cloudflare
+Date: Wed, 11 Feb 2026 11:06:36 GMT
+Content-Type: text/html
+Content-Length: 155
+Connection: close
+CF-RAY: -
+
+<html>
+<head><title>400 Bad Request</title></head>
+<body>
+<center><h1>400 Bad Request</h1></center>
+<hr><center>cloudflare</center>
+</body>
+
+Explication : Bad Request car il manque l'host
+
+GET / HTTP/1.1
+Host:perdu.com
+
+Réponse :
+
+HTTP/1.1 200 OK
+Date: Wed, 11 Feb 2026 11:04:50 GMT
+Content-Type: text/html
+Transfer-Encoding: chunked
+Connection: keep-alive
+Server: cloudflare
+Last-Modified: Thu, 02 Jun 2016 06:01:08 GMT
+cf-cache-status: DYNAMIC
+Cache-Control: max-age=600
+Expires: Wed, 11 Feb 2026 11:14:50 GMT
+Vary: Accept-Encoding,User-Agent
+Nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+Report-To: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=HAVUIDDMmy%2BW7gQHTGftgXtyll8Kz3T484mhoOTCewBq9ZmzkyUuPBbT7eP3%2BmPuThTAFUmAZBeA4kd%2Bbysjd5yzYLRVCOn%2F9Q%3D%3D"}]}
+CF-RAY: 9cc35e184a3e6fcf-CDG
+alt-svc: h3=":443"; ma=86400
+
+cc
+<html><head><title>Vous Etes Perdu ?</title></head><body><h1>Perdu sur l'Internet ?</h1><h2>Pas de panique, on va vous aider</h2><strong><pre>    * <----- vous &ecirc;tes ici</pre></strong></body></html>
+
+Réponse : Requête Réussie
