@@ -33,6 +33,8 @@ public class Server {
         String username = null;
         Socket dataSocket = null;
         ServerSocket passiveServer = null;
+        String currentDirectory = null;
+        String userRootDirectory = null;
 
         try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
              PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
@@ -69,6 +71,16 @@ public class Server {
                             out.println("Rentrez un utilisateur");
                         } else if ((realUser.equals(username) && realPWD.equals(arg)) || userAno.equals(username) ) {
                             isAuthenticated = true;
+                            if (userAno.equals(username)) {
+                                userRootDirectory = new File("Data/anonymous").getAbsolutePath();
+                            } else if (realUser.equals(username)) {
+                                userRootDirectory = new File("Data/foo").getAbsolutePath();
+                            }
+                            currentDirectory = userRootDirectory;
+                            File rootDir = new File(userRootDirectory);
+                            if (!rootDir.exists()) {
+                                rootDir.mkdirs();
+                            }
                             out.println("230 Login successful.");
                         } else {
                             username = null;
@@ -116,7 +128,6 @@ public class Server {
                         isAuthenticated = false;
                         username = null;
 
-                        // Fermeture des sockets de données si ouvertes
                         if (dataSocket != null && !dataSocket.isClosed()) {
                             try {
                                 dataSocket.close();
@@ -170,6 +181,78 @@ public class Server {
                             out.println("425 Impossible d'ouvrir la connexion de donnees.");
                         }
                         break;
+                    case "CWD":
+                        if (arg == null || arg.isEmpty()) {
+                            out.println("501 Syntaxe: CWD <dossier>");
+                            break;
+                        }
+                        File newDir = new File(currentDirectory, arg);
+                        if (!newDir.exists()) {
+                            out.println("550 Dossier inexistant.");
+                        } else if (!newDir.isDirectory()) {
+                            out.println("550 Ce n'est pas un dossier.");
+                        } else {
+                            try {
+                                String newPath = newDir.getCanonicalPath();
+                                if (!newPath.startsWith(userRootDirectory)) {
+                                    out.println("550 Acces refuse: hors de votre repertoire autorise.");
+                                } else {
+                                    currentDirectory = newPath;
+                                    out.println("250 Repertoire change vers: " + currentDirectory);
+                                }
+                            } catch (IOException e) {
+                                out.println("550 Erreur lors du changement de repertoire.");
+                            }
+                        }
+                        break;
+                    case "RETR":
+                        if (arg == null || arg.isEmpty()) {
+                            out.println("501 Syntaxe: RETR <fichier>");
+                            break;
+                        }
+                        if (dataSocket == null || dataSocket.isClosed()) {
+                            out.println("425 Pas de connexion de donnees.");
+                            break;
+                        }
+                        File fileToDownload = new File(currentDirectory, arg);
+                        try {
+                            String filePath = fileToDownload.getCanonicalPath();
+                            if (!filePath.startsWith(userRootDirectory)) {
+                                out.println("550 Acces refuse: hors de votre repertoire autorise.");
+                                break;
+                            }
+                        } catch (IOException e) {
+                            out.println("550 Erreur d'acces au fichier.");
+                            break;
+                        }
+                        if (!fileToDownload.exists()) {
+                            out.println("550 Fichier inexistant.");
+                            break;
+                        }
+                        if (!fileToDownload.isFile()) {
+                            out.println("550 Ce n'est pas un fichier.");
+                            break;
+                        }
+                        out.println("150 Ouverture de la connexion de donnees pour " + arg);
+                        try (OutputStream dataOutStream = dataSocket.getOutputStream();
+                             FileInputStream fis = new FileInputStream(fileToDownload)) {
+                            byte[] buffer = new byte[4096];
+                            int bytesRead;
+                            while ((bytesRead = fis.read(buffer)) != -1) {
+                                dataOutStream.write(buffer, 0, bytesRead);
+                            }
+                            dataOutStream.flush();
+                            out.println("226 Transfert termine.");
+                        } catch (IOException e) {
+                            out.println("426 Connexion de donnees fermee.");
+                        } finally {
+                            try {
+                                dataSocket.close();
+                            } catch (IOException e) {
+                                // Ignore close errors on data socket.
+                            }
+                        }
+                        break;
                     case "LIST":
                         if (dataSocket == null || dataSocket.isClosed()) {
                             out.println("425 Pas de connexion de donnees.");
@@ -177,32 +260,27 @@ public class Server {
                         }
                         out.println("150 Ouverture de la connexion de donnees.");
                         try (PrintWriter dataOut = new PrintWriter(dataSocket.getOutputStream(), true)) {
-                            File dir = new File(".");
+                            File dir = new File(currentDirectory);
                             File[] files = dir.listFiles();
                             if (files != null) {
                                 DateTimeFormatter formatter = DateTimeFormatter.ofPattern("MMM dd HH:mm");
                                 for (File file : files) {
-                                    // Permissions
                                     String permissions = file.isDirectory() ? "d" : "-";
                                     permissions += file.canRead() ? "r" : "-";
                                     permissions += file.canWrite() ? "w" : "-";
                                     permissions += file.canExecute() ? "x" : "-";
-                                    permissions += "------"; // Autres permissions simplifiées
+                                    permissions += "------";
                                     
-                                    // Taille
                                     String size = String.format("%10d", file.length());
                                     
-                                    // Date de modification
                                     LocalDateTime dateTime = LocalDateTime.ofInstant(
                                         java.time.Instant.ofEpochMilli(file.lastModified()),
                                         java.time.ZoneId.systemDefault()
                                     );
                                     String date = dateTime.format(formatter);
                                     
-                                    // Nom
                                     String name = file.getName();
                                     
-                                    // Format: permissions taille date nom
                                     String lined = String.format("%s %s %s %s", permissions, size, date, name);
                                     dataOut.println(lined);
                                 }

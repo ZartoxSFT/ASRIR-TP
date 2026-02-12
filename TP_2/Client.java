@@ -37,6 +37,20 @@ public class    Client {
                     continue;
                 }
 
+                if (command.toUpperCase().startsWith("RETR ")) {
+                    handleRetr(command.substring(5).trim(), in, out);
+                    continue;
+                }
+
+                if (command.toUpperCase().startsWith("CWD ")) {
+                    out.println(command);
+                    String response = in.readLine();
+                    if (response != null) {
+                        System.out.println(response);
+                    }
+                    continue;
+                }
+
                 out.println(command);
                 String response = in.readLine();
                 if (response == null) {
@@ -92,7 +106,7 @@ public class    Client {
     }
 
     private static void setupPassiveMode(BufferedReader in, PrintWriter out) throws IOException {
-        closeDataConnection(); // Fermer toute connexion précédente
+        closeDataConnection();
         
         out.println("PASV");
 
@@ -123,7 +137,6 @@ public class    Client {
             return;
         }
 
-        // Envoyer la commande LIST
         out.println("LIST");
         
         String response = in.readLine();
@@ -132,12 +145,10 @@ public class    Client {
         }
 
         try {
-            // Mode actif: attendre la connexion du serveur
             if (dataServer != null && dataSocket == null) {
                 dataSocket = dataServer.accept();
             }
 
-            // Lire et afficher les données
             if (dataSocket != null) {
                 try (BufferedReader dataIn = new BufferedReader(new InputStreamReader(dataSocket.getInputStream()))) {
                     String line;
@@ -147,7 +158,6 @@ public class    Client {
                 }
             }
 
-            // Lire la réponse finale (226)
             response = in.readLine();
             if (response != null) {
                 System.out.println(response);
@@ -156,6 +166,50 @@ public class    Client {
             System.out.println("Timeout: pas de connexion de donnees.");
         } finally {
             closeDataConnection(); // Fermer après LIST
+        }
+    }
+
+    private static void handleRetr(String filename, BufferedReader in, PrintWriter out) throws IOException {
+        if (dataServer == null && dataSocket == null) {
+            System.out.println("Erreur: Aucune connexion de donnees. Utilisez PORT ou PASV d'abord.");
+            return;
+        }
+
+        out.println("RETR " + filename);
+        
+        String response = in.readLine();
+        if (response != null) {
+            System.out.println(response);
+            if (response.startsWith("4") || response.startsWith("5")) {
+                return;
+            }
+        }
+
+        try {
+            if (dataServer != null && dataSocket == null) {
+                dataSocket = dataServer.accept();
+            }
+
+            if (dataSocket != null) {
+                try (InputStream dataIn = dataSocket.getInputStream();
+                     FileOutputStream fos = new FileOutputStream(filename)) {
+                    byte[] buffer = new byte[4096];
+                    int bytesRead;
+                    while ((bytesRead = dataIn.read(buffer)) != -1) {
+                        fos.write(buffer, 0, bytesRead);
+                    }
+                    System.out.println("Fichier sauvegarde: " + filename);
+                }
+            }
+
+            response = in.readLine();
+            if (response != null) {
+                System.out.println(response);
+            }
+        } catch (SocketTimeoutException eTimeout) {
+            System.out.println("Timeout: pas de connexion de donnees.");
+        } finally {
+            closeDataConnection();
         }
     }
 
