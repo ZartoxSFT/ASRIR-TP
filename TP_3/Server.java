@@ -1,11 +1,18 @@
 import java.io.*;
 import java.net.*;
 import java.nio.file.*;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Server {
-    private static final int PORT = 6666;
+    // Mets 6666 si ton TP l’exige, sinon garde 5000
+    private static final int PORT = 5000;
     public static final String WEB_ROOT = "www";
 
     public static void main(String[] args) {
@@ -42,6 +49,19 @@ public class Server {
 class ClientHandler implements Runnable {
     private final Socket clientSocket;
 
+    // Exo 5: nom du serveur
+    private static final String SERVER_NAME = "MonServeurTP3";
+
+    // Exo 5: table code -> message
+    private static final Map<Integer, String> STATUS_MESSAGES = new HashMap<>();
+    static {
+        STATUS_MESSAGES.put(200, "OK");
+        STATUS_MESSAGES.put(400, "Bad Request");
+        STATUS_MESSAGES.put(404, "Not Found");
+        STATUS_MESSAGES.put(405, "Method Not Allowed");
+        STATUS_MESSAGES.put(500, "Internal Server Error");
+    }
+
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }
@@ -69,9 +89,10 @@ class ClientHandler implements Runnable {
             int code = validateHttpRequest(request);
 
             if (code != 200) {
-                if (code == 400) sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
-                else if (code == 405) sendErrorResponse(out, dataOut, 405, "Method Not Allowed", clientInfo);
-                else sendErrorResponse(out, dataOut, 500, "Internal Server Error", clientInfo);
+                // Exo 5: réponses d’erreur avec en-tête conforme
+                if (code == 400) sendErrorResponse(out, dataOut, 400, clientInfo);
+                else if (code == 405) sendErrorResponse(out, dataOut, 405, clientInfo);
+                else sendErrorResponse(out, dataOut, 500, clientInfo);
                 return;
             }
 
@@ -91,6 +112,7 @@ class ClientHandler implements Runnable {
         }
     }
 
+    // Exo 4: réception requête complète jusqu'à la ligne vide
     private String receiveHttpRequest(BufferedReader in) throws IOException {
         StringBuilder sb = new StringBuilder();
 
@@ -106,6 +128,7 @@ class ClientHandler implements Runnable {
         return sb.toString();
     }
 
+    // Exo 4: validation -> 400 / 405 / 200
     private int validateHttpRequest(String request) {
         if (request == null || request.isBlank()) return 400;
 
@@ -133,31 +156,60 @@ class ClientHandler implements Runnable {
         return 200;
     }
 
+    // Exo 5: méthode surchargée pour générer l’en-tête
+    private String buildHttpHeader(int code) {
+        return buildHttpHeader(code, null);
+    }
+
+    // Exo 5: surcharge code + taille (Content-Length seulement si fourni)
+    private String buildHttpHeader(int code, Integer contentLength) {
+        int finalCode = STATUS_MESSAGES.containsKey(code) ? code : 500;
+        String message = STATUS_MESSAGES.get(finalCode);
+
+        // Format demandé: "lun., 24 nov. 2025 09:45:39 CET"
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Europe/Paris"));
+        String day = DateTimeFormatter.ofPattern("EEE", Locale.FRENCH).format(now); // ex: "lun."
+        String rest = DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm:ss z", Locale.FRENCH).format(now);
+        String dateHeader = day + ", " + rest;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 ").append(finalCode).append(" ").append(message).append("\r\n");
+        sb.append("Date: ").append(dateHeader).append("\r\n");
+        sb.append("Server: ").append(SERVER_NAME).append("\r\n");
+        sb.append("Connection: close\r\n");
+        if (contentLength != null) {
+            sb.append("Content-Length: ").append(contentLength).append("\r\n");
+        }
+        // Exo 5: au début, systématiquement text/html
+        sb.append("Content-Type: text/html\r\n");
+        sb.append("\r\n"); // ligne vide
+        return sb.toString();
+    }
+
     private void parseAndRespond(String requestLine, PrintWriter out, OutputStream dataOut, String clientInfo) {
         try {
             String[] parts = requestLine.split(" ");
             if (parts.length < 2) {
-                sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
+                sendErrorResponse(out, dataOut, 400, clientInfo);
                 return;
             }
 
             String method = parts[0];
             String path = parts[1];
 
-            // Sécurité: si jamais on arrive ici avec autre chose que GET
             if (!"GET".equals(method)) {
-                sendErrorResponse(out, dataOut, 405, "Method Not Allowed", clientInfo);
+                sendErrorResponse(out, dataOut, 405, clientInfo);
                 return;
             }
 
-            // IMPORTANT: gérer le format TP "GET http://localhost:6666/foo.html HTTP/1.1"
+            // Cas TP: GET http://localhost:5000/foo.html HTTP/1.1
             if (path.startsWith("http://") || path.startsWith("https://")) {
                 try {
                     URI uri = URI.create(path);
-                    path = uri.getPath(); // ex: /index.html
+                    path = uri.getPath();
                     if (path == null || path.isEmpty()) path = "/";
                 } catch (IllegalArgumentException e) {
-                    sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
+                    sendErrorResponse(out, dataOut, 400, clientInfo);
                     return;
                 }
             }
@@ -166,30 +218,25 @@ class ClientHandler implements Runnable {
                 path = "/index.html";
             }
 
-            String filePath;
-            if (path.startsWith("/")) {
-                filePath = Server.WEB_ROOT + path;
-            } else {
-                filePath = Server.WEB_ROOT + "/" + path;
-            }
+            String filePath = path.startsWith("/")
+                    ? Server.WEB_ROOT + path
+                    : Server.WEB_ROOT + "/" + path;
 
             File file = new File(filePath);
 
-            // Tu as demandé: PAS de 404 -> donc fichier absent = 400
+            // (Ton choix actuel) fichier absent => 400
+            // Attention: l'exo 6 demandera plutôt 404
             if (!file.exists() || !file.isFile()) {
-                sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
+                sendErrorResponse(out, dataOut, 400, clientInfo);
                 System.out.println("[" + clientInfo + "] Fichier absent (renvoyé 400): " + filePath);
                 return;
             }
 
             byte[] fileContent = Files.readAllBytes(file.toPath());
-            String contentType = getContentType(filePath);
 
-            out.println("HTTP/1.1 200 OK");
-            out.println("Content-Type: " + contentType);
-            out.println("Content-Length: " + fileContent.length);
-            out.println("Connection: close");
-            out.println();
+            // Exo 5: en-tête conforme
+            String header = buildHttpHeader(200, fileContent.length);
+            out.print(header);
             out.flush();
 
             dataOut.write(fileContent);
@@ -199,44 +246,35 @@ class ClientHandler implements Runnable {
 
         } catch (Exception e) {
             System.err.println("[ERREUR] [" + clientInfo + "] " + e.getMessage());
-            sendErrorResponse(out, dataOut, 500, "Internal Server Error", clientInfo);
+            sendErrorResponse(out, dataOut, 500, clientInfo);
         }
     }
 
-    private String getContentType(String filePath) {
-        if (filePath.endsWith(".html") || filePath.endsWith(".htm")) return "text/html; charset=UTF-8";
-        if (filePath.endsWith(".css")) return "text/css";
-        if (filePath.endsWith(".js")) return "application/javascript";
-        if (filePath.endsWith(".json")) return "application/json";
-        if (filePath.endsWith(".png")) return "image/png";
-        if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) return "image/jpeg";
-        if (filePath.endsWith(".gif")) return "image/gif";
-        if (filePath.endsWith(".txt")) return "text/plain";
-        return "application/octet-stream";
-    }
-
-    private void sendErrorResponse(PrintWriter out, OutputStream dataOut, int code, String message, String clientInfo) {
+    private void sendErrorResponse(PrintWriter out, OutputStream dataOut, int code, String clientInfo) {
         try {
-            String errorPage = "<!DOCTYPE html><html><head><title>Erreur " + code + "</title>" +
-                    "<style>body{font-family:Arial;text-align:center;padding:50px;}" +
-                    "h1{color:#d32f2f;}</style></head><body>" +
-                    "<h1>Erreur " + code + "</h1>" +
-                    "<p>" + message + "</p>" +
-                    "<hr><p>Serveur HTTP/1.1</p></body></html>";
+            String message = STATUS_MESSAGES.containsKey(code) ? STATUS_MESSAGES.get(code) : STATUS_MESSAGES.get(500);
+            int finalCode = STATUS_MESSAGES.containsKey(code) ? code : 500;
+
+            String errorPage =
+                    "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Erreur " + finalCode + "</title>" +
+                            "<style>body{font-family:Arial;text-align:center;padding:50px;}" +
+                            "h1{color:#d32f2f;}</style></head><body>" +
+                            "<h1>Erreur " + finalCode + "</h1>" +
+                            "<p>" + message + "</p>" +
+                            "<hr><p>" + SERVER_NAME + "</p></body></html>";
 
             byte[] content = errorPage.getBytes("UTF-8");
 
-            out.println("HTTP/1.1 " + code + " " + message);
-            out.println("Content-Type: text/html; charset=UTF-8");
-            out.println("Content-Length: " + content.length);
-            out.println("Connection: close");
-            out.println();
+            // Exo 5: en-tête conforme (avec Content-Length)
+            String header = buildHttpHeader(finalCode, content.length);
+            out.print(header);
             out.flush();
 
             dataOut.write(content);
             dataOut.flush();
 
-            System.out.println("[" + clientInfo + "] Erreur envoyée: " + code + " " + message);
+            System.out.println("[" + clientInfo + "] Erreur envoyée: " + finalCode + " " + message);
+
         } catch (IOException e) {
             System.err.println("[ERREUR] Impossible d'envoyer la réponse d'erreur: " + e.getMessage());
         }
