@@ -11,7 +11,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Server {
-    // Mets 6666 si ton TP l’exige, sinon garde 5000
     private static final int PORT = 5000;
     public static final String WEB_ROOT = "www";
 
@@ -49,10 +48,8 @@ public class Server {
 class ClientHandler implements Runnable {
     private final Socket clientSocket;
 
-    // Exo 5: nom du serveur
     private static final String SERVER_NAME = "MonServeurTP3";
 
-    // Exo 5: table code -> message
     private static final Map<Integer, String> STATUS_MESSAGES = new HashMap<>();
     static {
         STATUS_MESSAGES.put(200, "OK");
@@ -89,14 +86,12 @@ class ClientHandler implements Runnable {
             int code = validateHttpRequest(request);
 
             if (code != 200) {
-                // Exo 5: réponses d’erreur avec en-tête conforme
                 if (code == 400) sendErrorResponse(out, dataOut, 400, clientInfo);
                 else if (code == 405) sendErrorResponse(out, dataOut, 405, clientInfo);
                 else sendErrorResponse(out, dataOut, 500, clientInfo);
                 return;
             }
 
-            // OK -> on traite GET
             String requestLine = request.split("\r\n")[0];
             parseAndRespond(requestLine, out, dataOut, clientInfo);
 
@@ -112,7 +107,6 @@ class ClientHandler implements Runnable {
         }
     }
 
-    // Exo 4: réception requête complète jusqu'à la ligne vide
     private String receiveHttpRequest(BufferedReader in) throws IOException {
         StringBuilder sb = new StringBuilder();
 
@@ -128,7 +122,6 @@ class ClientHandler implements Runnable {
         return sb.toString();
     }
 
-    // Exo 4: validation -> 400 / 405 / 200
     private int validateHttpRequest(String request) {
         if (request == null || request.isBlank()) return 400;
 
@@ -156,19 +149,16 @@ class ClientHandler implements Runnable {
         return 200;
     }
 
-    // Exo 5: méthode surchargée pour générer l’en-tête
     private String buildHttpHeader(int code) {
         return buildHttpHeader(code, null);
     }
 
-    // Exo 5: surcharge code + taille (Content-Length seulement si fourni)
     private String buildHttpHeader(int code, Integer contentLength) {
         int finalCode = STATUS_MESSAGES.containsKey(code) ? code : 500;
         String message = STATUS_MESSAGES.get(finalCode);
 
-        // Format demandé: "lun., 24 nov. 2025 09:45:39 CET"
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Europe/Paris"));
-        String day = DateTimeFormatter.ofPattern("EEE", Locale.FRENCH).format(now); // ex: "lun."
+        String day = DateTimeFormatter.ofPattern("EEE", Locale.FRENCH).format(now);
         String rest = DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm:ss z", Locale.FRENCH).format(now);
         String dateHeader = day + ", " + rest;
 
@@ -180,9 +170,8 @@ class ClientHandler implements Runnable {
         if (contentLength != null) {
             sb.append("Content-Length: ").append(contentLength).append("\r\n");
         }
-        // Exo 5: au début, systématiquement text/html
         sb.append("Content-Type: text/html\r\n");
-        sb.append("\r\n"); // ligne vide
+        sb.append("\r\n");
         return sb.toString();
     }
 
@@ -202,7 +191,6 @@ class ClientHandler implements Runnable {
                 return;
             }
 
-            // Cas TP: GET http://localhost:5000/foo.html HTTP/1.1
             if (path.startsWith("http://") || path.startsWith("https://")) {
                 try {
                     URI uri = URI.create(path);
@@ -224,8 +212,6 @@ class ClientHandler implements Runnable {
 
             File file = new File(filePath);
 
-            // (Ton choix actuel) fichier absent => 400
-            // Attention: l'exo 6 demandera plutôt 404
             if (!file.exists() || !file.isFile()) {
                 sendErrorResponse(out, dataOut, 400, clientInfo);
                 System.out.println("[" + clientInfo + "] Fichier absent (renvoyé 400): " + filePath);
@@ -234,7 +220,6 @@ class ClientHandler implements Runnable {
 
             byte[] fileContent = Files.readAllBytes(file.toPath());
 
-            // Exo 5: en-tête conforme
             String header = buildHttpHeader(200, fileContent.length);
             out.print(header);
             out.flush();
@@ -265,7 +250,6 @@ class ClientHandler implements Runnable {
 
             byte[] content = errorPage.getBytes("UTF-8");
 
-            // Exo 5: en-tête conforme (avec Content-Length)
             String header = buildHttpHeader(finalCode, content.length);
             out.print(header);
             out.flush();
