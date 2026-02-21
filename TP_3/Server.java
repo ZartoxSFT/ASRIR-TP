@@ -1,5 +1,6 @@
 import java.io.*;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -68,8 +69,8 @@ class ClientHandler implements Runnable {
         String clientInfo = clientSocket.getInetAddress().getHostAddress() + ":" + clientSocket.getPort();
 
         try (
-                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                PrintWriter out = new PrintWriter(clientSocket.getOutputStream());
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
+                PrintWriter out = new PrintWriter(new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8));
                 OutputStream dataOut = clientSocket.getOutputStream()
         ) {
             System.out.println("\n--- [" + Thread.currentThread().getName() + "] Traitement client: " + clientInfo + " ---");
@@ -158,9 +159,7 @@ class ClientHandler implements Runnable {
         String message = STATUS_MESSAGES.get(finalCode);
 
         ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Europe/Paris"));
-        String day = DateTimeFormatter.ofPattern("EEE", Locale.FRENCH).format(now);
-        String rest = DateTimeFormatter.ofPattern("dd MMM yyyy HH:mm:ss z", Locale.FRENCH).format(now);
-        String dateHeader = day + ", " + rest;
+        String dateHeader = DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.FRENCH).format(now);
 
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(finalCode).append(" ").append(message).append("\r\n");
@@ -194,12 +193,28 @@ class ClientHandler implements Runnable {
             if (path.startsWith("http://") || path.startsWith("https://")) {
                 try {
                     URI uri = URI.create(path);
-                    path = uri.getPath();
+                    path = uri.getRawPath();
+
                     if (path == null || path.isEmpty()) path = "/";
                 } catch (IllegalArgumentException e) {
                     sendErrorResponse(out, dataOut, 400, clientInfo);
                     return;
                 }
+            }
+
+            int q = path.indexOf("?");
+            if (q >= 0) path = path.substring(0, q);
+
+            try {
+                path = java.net.URLDecoder.decode(path, "UTF-8");
+            } catch (Exception e) {
+                sendErrorResponse(out, dataOut, 400, clientInfo);
+                return;
+            }
+
+            if (path.contains("..")) {
+                sendErrorResponse(out, dataOut, 400, clientInfo);
+                return;
             }
 
             if (path.equals("/") || path.isEmpty()) {
@@ -212,9 +227,13 @@ class ClientHandler implements Runnable {
 
             File file = new File(filePath);
 
+            if (file.exists() && file.isDirectory()) {
+                file = new File(file, "index.html");
+            }
+
             if (!file.exists() || !file.isFile()) {
-                sendErrorResponse(out, dataOut, 400, clientInfo);
-                System.out.println("[" + clientInfo + "] Fichier absent (renvoyé 400): " + filePath);
+                sendErrorResponse(out, dataOut, 404, clientInfo);
+                System.out.println("[" + clientInfo + "] 404 Not Found: " + file.getPath());
                 return;
             }
 
@@ -227,11 +246,77 @@ class ClientHandler implements Runnable {
             dataOut.write(fileContent);
             dataOut.flush();
 
-            System.out.println("[" + clientInfo + "] 200 OK: " + filePath);
+            System.out.println("[" + clientInfo + "] 200 OK: " + file.getPath());
 
         } catch (Exception e) {
             System.err.println("[ERREUR] [" + clientInfo + "] " + e.getMessage());
             sendErrorResponse(out, dataOut, 500, clientInfo);
+        }
+    }
+
+    private String extractPathFromTarget(String target) {
+        if (target == null || target.isBlank()) return null;
+
+        if (target.startsWith("http://") || target.startsWith("https://")) {
+            try {
+                URI uri = URI.create(target);
+                String p = uri.getRawPath();
+                if (p == null || p.isEmpty()) p = "/";
+                String q = uri.getRawQuery();
+                if (q != null && !q.isEmpty()) return p + "?" + q;
+                return p;
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
+
+        return target;
+    }
+
+    private String sanitizePath(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) return null;
+
+        int hash = rawPath.indexOf('#');
+        if (hash >= 0) rawPath = rawPath.substring(0, hash);
+
+        int q = rawPath.indexOf('?');
+        if (q >= 0) rawPath = rawPath.substring(0, q);
+
+        if (rawPath.isEmpty()) rawPath = "/";
+
+        if (!rawPath.startsWith("/")) rawPath = "/" + rawPath;
+
+        String decoded = percentDecode(rawPath);
+        if (decoded == null) return null;
+
+        Path normalized = Paths.get(decoded).normalize();
+
+        String result = normalized.toString().replace('\\', '/');
+        if (!result.startsWith("/")) result = "/" + result;
+
+        return result;
+    }
+
+    private String percentDecode(String s) {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '%') {
+                    if (i + 2 >= s.length()) return null;
+                    int hi = Character.digit(s.charAt(i + 1), 16);
+                    int lo = Character.digit(s.charAt(i + 2), 16);
+                    if (hi == -1 || lo == -1) return null;
+                    baos.write((hi << 4) + lo);
+                    i += 2;
+                } else {
+                    byte[] bytes = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
+                    baos.write(bytes);
+                }
+            }
+            return baos.toString(StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -248,7 +333,7 @@ class ClientHandler implements Runnable {
                             "<p>" + message + "</p>" +
                             "<hr><p>" + SERVER_NAME + "</p></body></html>";
 
-            byte[] content = errorPage.getBytes("UTF-8");
+            byte[] content = errorPage.getBytes(StandardCharsets.UTF_8);
 
             String header = buildHttpHeader(finalCode, content.length);
             out.print(header);
