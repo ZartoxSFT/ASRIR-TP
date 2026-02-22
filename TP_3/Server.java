@@ -1,7 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
+import java.nio.file.Files;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -13,12 +13,13 @@ import java.util.regex.Pattern;
 
 public class Server {
     private static final int PORT = 5000;
-    public static final String WEB_ROOT = "www";
 
     public static void main(String[] args) {
         System.out.println("===========================================");
         System.out.println("Serveur HTTP démarré sur le port " + PORT);
-        System.out.println("Racine web: " + WEB_ROOT);
+        System.out.println("Supporte 2 sites via Host:");
+        System.out.println(" - Host: site1  -> dossier site1/");
+        System.out.println(" - Host: site2  -> dossier site2/");
         System.out.println("===========================================\n");
 
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
@@ -50,6 +51,19 @@ class ClientHandler implements Runnable {
     private final Socket clientSocket;
 
     private static final String SERVER_NAME = "MonServeurTP3";
+
+    private static final String SITE1_ROOT = "site1";
+    private static final String SITE2_ROOT = "site2";
+
+    private static final Map<String, String> HOST_TO_ROOT = new HashMap<>();
+    static {
+        HOST_TO_ROOT.put("site1", SITE1_ROOT);
+        HOST_TO_ROOT.put("site1.local", SITE1_ROOT);
+        HOST_TO_ROOT.put("localhost", SITE1_ROOT);
+
+        HOST_TO_ROOT.put("site2", SITE2_ROOT);
+        HOST_TO_ROOT.put("site2.local", SITE2_ROOT);
+    }
 
     private static final Map<Integer, String> STATUS_MESSAGES = new HashMap<>();
     static {
@@ -85,7 +99,6 @@ class ClientHandler implements Runnable {
             System.out.println("[" + clientInfo + "] Requête complète reçue:\n" + request);
 
             int code = validateHttpRequest(request);
-
             if (code != 200) {
                 if (code == 400) sendErrorResponse(out, dataOut, 400, clientInfo);
                 else if (code == 405) sendErrorResponse(out, dataOut, 405, clientInfo);
@@ -93,8 +106,21 @@ class ClientHandler implements Runnable {
                 return;
             }
 
+            String host = extractHost(request);
+            if (host == null || host.isEmpty()) {
+
+                sendErrorResponse(out, dataOut, 400, clientInfo);
+                return;
+            }
+
+            String webRoot = HOST_TO_ROOT.get(host);
+            if (webRoot == null) {
+                sendErrorResponse(out, dataOut, 404, clientInfo);
+                return;
+            }
+
             String requestLine = request.split("\r\n")[0];
-            parseAndRespond(requestLine, out, dataOut, clientInfo);
+            parseAndRespond(requestLine, out, dataOut, clientInfo, webRoot);
 
         } catch (IOException e) {
             System.err.println("[ERREUR] [" + clientInfo + "] Erreur lors du traitement: " + e.getMessage());
@@ -107,6 +133,7 @@ class ClientHandler implements Runnable {
             }
         }
     }
+
 
     private String receiveHttpRequest(BufferedReader in) throws IOException {
         StringBuilder sb = new StringBuilder();
@@ -150,6 +177,23 @@ class ClientHandler implements Runnable {
         return 200;
     }
 
+    private String extractHost(String request) {
+        String[] lines = request.split("\r\n");
+        for (int i = 1; i < lines.length; i++) {
+            String l = lines[i];
+            if (l.isEmpty()) break;
+
+            if (l.toLowerCase().startsWith("host:")) {
+                String hostValue = l.substring(5).trim();
+                int idx = hostValue.indexOf(':');
+                if (idx >= 0) hostValue = hostValue.substring(0, idx);
+                return hostValue.trim().toLowerCase();
+            }
+        }
+        return null;
+    }
+
+
     private String buildHttpHeader(int code) {
         return buildHttpHeader(code, null);
     }
@@ -174,7 +218,7 @@ class ClientHandler implements Runnable {
         return sb.toString();
     }
 
-    private void parseAndRespond(String requestLine, PrintWriter out, OutputStream dataOut, String clientInfo) {
+    private void parseAndRespond(String requestLine, PrintWriter out, OutputStream dataOut, String clientInfo, String webRoot) {
         try {
             String[] parts = requestLine.split(" ");
             if (parts.length < 2) {
@@ -194,7 +238,6 @@ class ClientHandler implements Runnable {
                 try {
                     URI uri = URI.create(path);
                     path = uri.getRawPath();
-
                     if (path == null || path.isEmpty()) path = "/";
                 } catch (IllegalArgumentException e) {
                     sendErrorResponse(out, dataOut, 400, clientInfo);
@@ -222,8 +265,8 @@ class ClientHandler implements Runnable {
             }
 
             String filePath = path.startsWith("/")
-                    ? Server.WEB_ROOT + path
-                    : Server.WEB_ROOT + "/" + path;
+                    ? webRoot + path
+                    : webRoot + "/" + path;
 
             File file = new File(filePath);
 
@@ -246,77 +289,11 @@ class ClientHandler implements Runnable {
             dataOut.write(fileContent);
             dataOut.flush();
 
-            System.out.println("[" + clientInfo + "] 200 OK: " + file.getPath());
+            System.out.println("[" + clientInfo + "] 200 OK (" + webRoot + "): " + file.getPath());
 
         } catch (Exception e) {
             System.err.println("[ERREUR] [" + clientInfo + "] " + e.getMessage());
             sendErrorResponse(out, dataOut, 500, clientInfo);
-        }
-    }
-
-    private String extractPathFromTarget(String target) {
-        if (target == null || target.isBlank()) return null;
-
-        if (target.startsWith("http://") || target.startsWith("https://")) {
-            try {
-                URI uri = URI.create(target);
-                String p = uri.getRawPath();
-                if (p == null || p.isEmpty()) p = "/";
-                String q = uri.getRawQuery();
-                if (q != null && !q.isEmpty()) return p + "?" + q;
-                return p;
-            } catch (IllegalArgumentException e) {
-                return null;
-            }
-        }
-
-        return target;
-    }
-
-    private String sanitizePath(String rawPath) {
-        if (rawPath == null || rawPath.isBlank()) return null;
-
-        int hash = rawPath.indexOf('#');
-        if (hash >= 0) rawPath = rawPath.substring(0, hash);
-
-        int q = rawPath.indexOf('?');
-        if (q >= 0) rawPath = rawPath.substring(0, q);
-
-        if (rawPath.isEmpty()) rawPath = "/";
-
-        if (!rawPath.startsWith("/")) rawPath = "/" + rawPath;
-
-        String decoded = percentDecode(rawPath);
-        if (decoded == null) return null;
-
-        Path normalized = Paths.get(decoded).normalize();
-
-        String result = normalized.toString().replace('\\', '/');
-        if (!result.startsWith("/")) result = "/" + result;
-
-        return result;
-    }
-
-    private String percentDecode(String s) {
-        try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            for (int i = 0; i < s.length(); i++) {
-                char c = s.charAt(i);
-                if (c == '%') {
-                    if (i + 2 >= s.length()) return null;
-                    int hi = Character.digit(s.charAt(i + 1), 16);
-                    int lo = Character.digit(s.charAt(i + 2), 16);
-                    if (hi == -1 || lo == -1) return null;
-                    baos.write((hi << 4) + lo);
-                    i += 2;
-                } else {
-                    byte[] bytes = String.valueOf(c).getBytes(StandardCharsets.UTF_8);
-                    baos.write(bytes);
-                }
-            }
-            return baos.toString(StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return null;
         }
     }
 
