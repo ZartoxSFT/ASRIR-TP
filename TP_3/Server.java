@@ -21,13 +21,15 @@ public class Server {
         System.out.println(" - Host: site1  -> dossier site1/");
         System.out.println(" - Host: site2  -> dossier site2/");
         System.out.println("===========================================\n");
-
+        //serveur qui écoute en continu et accepte les connexions
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("En attente de connexions...\n");
 
             while (true) {
                 try {
+                    // On accepte un client (socket TCP)
                     Socket clientSocket = serverSocket.accept();
+                    // multi-clients => un thread par client
                     Thread clientThread = new Thread(new ClientHandler(clientSocket));
                     clientThread.start();
 
@@ -46,12 +48,17 @@ public class Server {
         }
     }
 }
-
+/**
+ * Classe qui gère 1 client (dans un thread).
+ * Elle reçoit une requête, la valide, choisit le site via Host, puis renvoie le fichier / l'erreur.
+ */
 class ClientHandler implements Runnable {
     private final Socket clientSocket;
 
+    // nom du serveur affiché dans l'en-tête HTTP
     private static final String SERVER_NAME = "MonServeurTP3";
 
+    // deux sites = deux dossiers racines
     private static final String SITE1_ROOT = "site1";
     private static final String SITE2_ROOT = "site2";
 
@@ -65,6 +72,10 @@ class ClientHandler implements Runnable {
         HOST_TO_ROOT.put("site2.local", SITE2_ROOT);
     }
 
+    /**
+     * table code -> message.
+     * Permet de construire la status line : "HTTP/1.1 404 Not Found"
+     */
     private static final Map<Integer, String> STATUS_MESSAGES = new HashMap<>();
     static {
         STATUS_MESSAGES.put(200, "OK");
@@ -82,6 +93,7 @@ class ClientHandler implements Runnable {
     public void run() {
         String clientInfo = clientSocket.getInetAddress().getHostAddress() + ":" + clientSocket.getPort();
 
+        // On récupère les flux (entrée / sortie)
         try (
                 BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
                 PrintWriter out = new PrintWriter(new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8));
@@ -89,6 +101,7 @@ class ClientHandler implements Runnable {
         ) {
             System.out.println("\n--- [" + Thread.currentThread().getName() + "] Traitement client: " + clientInfo + " ---");
 
+            // lire une requête HTTP complète (jusqu'à ligne vide)
             String request = receiveHttpRequest(in);
 
             if (request == null || request.isBlank()) {
@@ -98,6 +111,7 @@ class ClientHandler implements Runnable {
 
             System.out.println("[" + clientInfo + "] Requête complète reçue:\n" + request);
 
+            // validation (format + GET + Host)
             int code = validateHttpRequest(request);
             if (code != 200) {
                 if (code == 400) sendErrorResponse(out, dataOut, 400, clientInfo);
@@ -106,6 +120,7 @@ class ClientHandler implements Runnable {
                 return;
             }
 
+            // récupérer Host pour choisir le site
             String host = extractHost(request);
             if (host == null || host.isEmpty()) {
 
@@ -113,18 +128,23 @@ class ClientHandler implements Runnable {
                 return;
             }
 
+            // webRoot = dossier racine du site choisi
             String webRoot = HOST_TO_ROOT.get(host);
             if (webRoot == null) {
+                // Host non reconnu => erreur (ici: 404)
                 sendErrorResponse(out, dataOut, 404, clientInfo);
                 return;
             }
 
+            // On prend la première ligne (request-line) : "GET /path HTTP/1.1"
             String requestLine = request.split("\r\n")[0];
+            // répondre en servant un fichier selon l'URL dans le bon site
             parseAndRespond(requestLine, out, dataOut, clientInfo, webRoot);
 
         } catch (IOException e) {
             System.err.println("[ERREUR] [" + clientInfo + "] Erreur lors du traitement: " + e.getMessage());
         } finally {
+            // Toujours fermer la socket client
             try {
                 clientSocket.close();
                 System.out.println("[FERMETURE] Client: " + clientInfo);
@@ -135,7 +155,13 @@ class ClientHandler implements Runnable {
     }
 
 
-    private String receiveHttpRequest(BufferedReader in) throws IOException {
+    /**
+     * Lit la requête HTTP jusqu'à la ligne vide.
+     * Exemple :
+     * GET / HTTP/1.1\r\n
+     * Host: ...\r\n
+     * \r\n
+     */private String receiveHttpRequest(BufferedReader in) throws IOException {
         StringBuilder sb = new StringBuilder();
 
         String line = in.readLine();
