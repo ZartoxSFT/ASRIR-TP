@@ -176,12 +176,24 @@ class ClientHandler implements Runnable {
         return sb.toString();
     }
 
+    /**
+     * Vérifie :
+     * - request-line correcte (regex)
+     * - méthode GET seulement
+     * - présence du header Host:
+     *
+     * Retour :
+     * - 200 si OK
+     * - 400 si mal formée
+     * - 405 si méthode != GET
+     */
     private int validateHttpRequest(String request) {
         if (request == null || request.isBlank()) return 400;
 
         String[] lines = request.split("\r\n");
         if (lines.length == 0 || lines[0].isBlank()) return 400;
 
+        // request-line: METHOD PATH HTTP/x.x
         Pattern p = Pattern.compile("^(\\S+)\\s+(\\S+)\\s+HTTP/(\\d\\.\\d)\\s*$");
         Matcher m = p.matcher(lines[0].trim());
         if (!m.matches()) return 400;
@@ -189,6 +201,7 @@ class ClientHandler implements Runnable {
         String method = m.group(1);
         if (!"GET".equals(method)) return 405;
 
+        // HTTP/1.1 => Host obligatoire
         boolean hasHost = false;
         for (int i = 1; i < lines.length; i++) {
             String l = lines[i];
@@ -203,6 +216,10 @@ class ClientHandler implements Runnable {
         return 200;
     }
 
+    /**
+     * Récupère le header Host: ...
+     * Gère aussi "Host: localhost:5000" en retirant le port.
+     */
     private String extractHost(String request) {
         String[] lines = request.split("\r\n");
         for (int i = 1; i < lines.length; i++) {
@@ -210,8 +227,8 @@ class ClientHandler implements Runnable {
             if (l.isEmpty()) break;
 
             if (l.toLowerCase().startsWith("host:")) {
-                String hostValue = l.substring(5).trim();
-                int idx = hostValue.indexOf(':');
+                String hostValue = l.substring(5).trim(); // après "Host:"
+                int idx = hostValue.indexOf(':'); // après "Host:"
                 if (idx >= 0) hostValue = hostValue.substring(0, idx);
                 return hostValue.trim().toLowerCase();
             }
@@ -219,12 +236,8 @@ class ClientHandler implements Runnable {
         return null;
     }
 
-
-    private String buildHttpHeader(int code) {
-        return buildHttpHeader(code, null);
-    }
-
     private String buildHttpHeader(int code, Integer contentLength) {
+        // Si code inconnu -> 500
         int finalCode = STATUS_MESSAGES.containsKey(code) ? code : 500;
         String message = STATUS_MESSAGES.get(finalCode);
 
@@ -233,6 +246,7 @@ class ClientHandler implements Runnable {
 
         StringBuilder sb = new StringBuilder();
         sb.append("HTTP/1.1 ").append(finalCode).append(" ").append(message).append("\r\n");
+        // headers obligatoires exo 5
         sb.append("Date: ").append(dateHeader).append("\r\n");
         sb.append("Server: ").append(SERVER_NAME).append("\r\n");
         sb.append("Connection: close\r\n");
@@ -244,8 +258,20 @@ class ClientHandler implements Runnable {
         return sb.toString();
     }
 
+    /**
+     * Traite un GET :
+     * - enlève ?query
+     * - décode %xx (URLDecoder)
+     * - refuse ".." (anti traversal)
+     * - "/" => "/index.html"
+     * - si dossier => ajoute "index.html"
+     * - absent => 404
+     * - sinon 200 + contenu fichier
+     *
+     * webRoot : dossier racine choisi via Host (exo 7)
+     */
     private void parseAndRespond(String requestLine, PrintWriter out, OutputStream dataOut, String clientInfo, String webRoot) {
-        try {
+         try {
             String[] parts = requestLine.split(" ");
             if (parts.length < 2) {
                 sendErrorResponse(out, dataOut, 400, clientInfo);
@@ -255,12 +281,14 @@ class ClientHandler implements Runnable {
             String method = parts[0];
             String path = parts[1];
 
-            if (!"GET".equals(method)) {
+             // sécurité : si on arrive ici avec autre chose que GET
+             if (!"GET".equals(method)) {
                 sendErrorResponse(out, dataOut, 405, clientInfo);
                 return;
             }
 
-            if (path.startsWith("http://") || path.startsWith("https://")) {
+             // Cas "GET http://.../page.html HTTP/1.1"
+             if (path.startsWith("http://") || path.startsWith("https://")) {
                 try {
                     URI uri = URI.create(path);
                     path = uri.getRawPath();
@@ -271,49 +299,55 @@ class ClientHandler implements Runnable {
                 }
             }
 
-            int q = path.indexOf("?");
+             // enlever la partie ?query
+             int q = path.indexOf("?");
             if (q >= 0) path = path.substring(0, q);
 
-            try {
+             // décoder %xx (version simple)
+             try {
                 path = java.net.URLDecoder.decode(path, "UTF-8");
             } catch (Exception e) {
                 sendErrorResponse(out, dataOut, 400, clientInfo);
                 return;
             }
-
+             // éviter de sortir du dossier du site
             if (path.contains("..")) {
                 sendErrorResponse(out, dataOut, 400, clientInfo);
                 return;
             }
 
+            // "/" => "/index.html"
             if (path.equals("/") || path.isEmpty()) {
                 path = "/index.html";
             }
-
+            // construire le chemin local selon le site choisi
             String filePath = path.startsWith("/")
                     ? webRoot + path
                     : webRoot + "/" + path;
 
             File file = new File(filePath);
 
-            if (file.exists() && file.isDirectory()) {
+             // si c'est un dossier => index.html dedans
+             if (file.exists() && file.isDirectory()) {
                 file = new File(file, "index.html");
             }
-
+             // absent => 404
             if (!file.exists() || !file.isFile()) {
                 sendErrorResponse(out, dataOut, 404, clientInfo);
                 System.out.println("[" + clientInfo + "] 404 Not Found: " + file.getPath());
                 return;
             }
 
-            byte[] fileContent = Files.readAllBytes(file.toPath());
+             // lecture + envoi du contenu
+             byte[] fileContent = Files.readAllBytes(file.toPath());
 
             String header = buildHttpHeader(200, fileContent.length);
             out.print(header);
             out.flush();
 
-            dataOut.write(fileContent);
-            dataOut.flush();
+             // Corps de la réponse = fichier
+             dataOut.write(fileContent);
+             dataOut.flush();
 
             System.out.println("[" + clientInfo + "] 200 OK (" + webRoot + "): " + file.getPath());
 
@@ -322,7 +356,9 @@ class ClientHandler implements Runnable {
             sendErrorResponse(out, dataOut, 500, clientInfo);
         }
     }
-
+    /**
+     * Envoie une page HTML d'erreur (400/404/405/500) avec un header conforme exo 5.
+     */
     private void sendErrorResponse(PrintWriter out, OutputStream dataOut, int code, String clientInfo) {
         try {
             String message = STATUS_MESSAGES.containsKey(code) ? STATUS_MESSAGES.get(code) : STATUS_MESSAGES.get(500);
