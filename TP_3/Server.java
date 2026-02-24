@@ -1,25 +1,35 @@
 import java.io.*;
 import java.net.*;
-import java.nio.file.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Server {
-    private static final int PORT = 6666;
-    public static final String WEB_ROOT = "www";
+    private static final int PORT = 5000;
 
     public static void main(String[] args) {
         System.out.println("===========================================");
         System.out.println("Serveur HTTP démarré sur le port " + PORT);
-        System.out.println("Racine web: " + WEB_ROOT);
+        System.out.println("Supporte 2 sites via Host:");
+        System.out.println(" - Host: site1  -> dossier site1/");
+        System.out.println(" - Host: site2  -> dossier site2/");
         System.out.println("===========================================\n");
-
+        //serveur qui écoute en continu et accepte les connexions
         try (ServerSocket serverSocket = new ServerSocket(PORT)) {
             System.out.println("En attente de connexions...\n");
 
             while (true) {
                 try {
+                    // On accepte un client (socket TCP)
                     Socket clientSocket = serverSocket.accept();
+                    // multi-clients => un thread par client
                     Thread clientThread = new Thread(new ClientHandler(clientSocket));
                     clientThread.start();
 
@@ -38,9 +48,42 @@ public class Server {
         }
     }
 }
-
+/**
+ * Classe qui gère 1 client (dans un thread).
+ * Elle reçoit une requête, la valide, choisit le site via Host, puis renvoie le fichier / l'erreur.
+ */
 class ClientHandler implements Runnable {
     private final Socket clientSocket;
+
+    // nom du serveur affiché dans l'en-tête HTTP
+    private static final String SERVER_NAME = "MonServeurTP3";
+
+    // deux sites = deux dossiers racines
+    private static final String SITE1_ROOT = "site1";
+    private static final String SITE2_ROOT = "site2";
+
+    private static final Map<String, String> HOST_TO_ROOT = new HashMap<>();
+    static {
+        HOST_TO_ROOT.put("site1", SITE1_ROOT);
+        HOST_TO_ROOT.put("site1.local", SITE1_ROOT);
+        HOST_TO_ROOT.put("localhost", SITE1_ROOT);
+
+        HOST_TO_ROOT.put("site2", SITE2_ROOT);
+        HOST_TO_ROOT.put("site2.local", SITE2_ROOT);
+    }
+
+    /**
+     * table code -> message.
+     * Permet de construire la status line : "HTTP/1.1 404 Not Found"
+     */
+    private static final Map<Integer, String> STATUS_MESSAGES = new HashMap<>();
+    static {
+        STATUS_MESSAGES.put(200, "OK");
+        STATUS_MESSAGES.put(400, "Bad Request");
+        STATUS_MESSAGES.put(404, "Not Found");
+        STATUS_MESSAGES.put(405, "Method Not Allowed");
+        STATUS_MESSAGES.put(500, "Internal Server Error");
+    }
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
@@ -50,13 +93,15 @@ class ClientHandler implements Runnable {
     public void run() {
         String clientInfo = clientSocket.getInetAddress().getHostAddress() + ":" + clientSocket.getPort();
 
+        // On récupère les flux (entrée / sortie)
         try (
-                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                PrintWriter out = new PrintWriter(clientSocket.getOutputStream());
+                BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
+                PrintWriter out = new PrintWriter(new OutputStreamWriter(clientSocket.getOutputStream(), StandardCharsets.UTF_8));
                 OutputStream dataOut = clientSocket.getOutputStream()
         ) {
             System.out.println("\n--- [" + Thread.currentThread().getName() + "] Traitement client: " + clientInfo + " ---");
 
+            // lire une requête HTTP complète (jusqu'à ligne vide)
             String request = receiveHttpRequest(in);
 
             if (request == null || request.isBlank()) {
@@ -66,22 +111,40 @@ class ClientHandler implements Runnable {
 
             System.out.println("[" + clientInfo + "] Requête complète reçue:\n" + request);
 
+            // validation (format + GET + Host)
             int code = validateHttpRequest(request);
-
             if (code != 200) {
-                if (code == 400) sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
-                else if (code == 405) sendErrorResponse(out, dataOut, 405, "Method Not Allowed", clientInfo);
-                else sendErrorResponse(out, dataOut, 500, "Internal Server Error", clientInfo);
+                if (code == 400) sendErrorResponse(out, dataOut, 400, clientInfo);
+                else if (code == 405) sendErrorResponse(out, dataOut, 405, clientInfo);
+                else sendErrorResponse(out, dataOut, 500, clientInfo);
                 return;
             }
 
-            // OK -> on traite GET
+            // récupérer Host pour choisir le site
+            String host = extractHost(request);
+            if (host == null || host.isEmpty()) {
+
+                sendErrorResponse(out, dataOut, 400, clientInfo);
+                return;
+            }
+
+            // webRoot = dossier racine du site choisi
+            String webRoot = HOST_TO_ROOT.get(host);
+            if (webRoot == null) {
+                // Host non reconnu => erreur (ici: 404)
+                sendErrorResponse(out, dataOut, 404, clientInfo);
+                return;
+            }
+
+            // On prend la première ligne (request-line) : "GET /path HTTP/1.1"
             String requestLine = request.split("\r\n")[0];
-            parseAndRespond(requestLine, out, dataOut, clientInfo);
+            // répondre en servant un fichier selon l'URL dans le bon site
+            parseAndRespond(requestLine, out, dataOut, clientInfo, webRoot);
 
         } catch (IOException e) {
             System.err.println("[ERREUR] [" + clientInfo + "] Erreur lors du traitement: " + e.getMessage());
         } finally {
+            // Toujours fermer la socket client
             try {
                 clientSocket.close();
                 System.out.println("[FERMETURE] Client: " + clientInfo);
@@ -91,7 +154,14 @@ class ClientHandler implements Runnable {
         }
     }
 
-    private String receiveHttpRequest(BufferedReader in) throws IOException {
+
+    /**
+     * Lit la requête HTTP jusqu'à la ligne vide.
+     * Exemple :
+     * GET / HTTP/1.1\r\n
+     * Host: ...\r\n
+     * \r\n
+     */private String receiveHttpRequest(BufferedReader in) throws IOException {
         StringBuilder sb = new StringBuilder();
 
         String line = in.readLine();
@@ -106,12 +176,24 @@ class ClientHandler implements Runnable {
         return sb.toString();
     }
 
+    /**
+     * Vérifie :
+     * - request-line correcte (regex)
+     * - méthode GET seulement
+     * - présence du header Host:
+     *
+     * Retour :
+     * - 200 si OK
+     * - 400 si mal formée
+     * - 405 si méthode != GET
+     */
     private int validateHttpRequest(String request) {
         if (request == null || request.isBlank()) return 400;
 
         String[] lines = request.split("\r\n");
         if (lines.length == 0 || lines[0].isBlank()) return 400;
 
+        // request-line: METHOD PATH HTTP/x.x
         Pattern p = Pattern.compile("^(\\S+)\\s+(\\S+)\\s+HTTP/(\\d\\.\\d)\\s*$");
         Matcher m = p.matcher(lines[0].trim());
         if (!m.matches()) return 400;
@@ -119,6 +201,7 @@ class ClientHandler implements Runnable {
         String method = m.group(1);
         if (!"GET".equals(method)) return 405;
 
+        // HTTP/1.1 => Host obligatoire
         boolean hasHost = false;
         for (int i = 1; i < lines.length; i++) {
             String l = lines[i];
@@ -133,110 +216,173 @@ class ClientHandler implements Runnable {
         return 200;
     }
 
-    private void parseAndRespond(String requestLine, PrintWriter out, OutputStream dataOut, String clientInfo) {
-        try {
+    /**
+     * Récupère le header Host: ...
+     * Gère aussi "Host: localhost:5000" en retirant le port.
+     */
+    private String extractHost(String request) {
+        String[] lines = request.split("\r\n");
+        for (int i = 1; i < lines.length; i++) {
+            String l = lines[i];
+            if (l.isEmpty()) break;
+
+            if (l.toLowerCase().startsWith("host:")) {
+                String hostValue = l.substring(5).trim(); // après "Host:"
+                int idx = hostValue.indexOf(':'); // après "Host:"
+                if (idx >= 0) hostValue = hostValue.substring(0, idx);
+                return hostValue.trim().toLowerCase();
+            }
+        }
+        return null;
+    }
+
+    private String buildHttpHeader(int code, Integer contentLength) {
+        // Si code inconnu -> 500
+        int finalCode = STATUS_MESSAGES.containsKey(code) ? code : 500;
+        String message = STATUS_MESSAGES.get(finalCode);
+
+        ZonedDateTime now = ZonedDateTime.now(ZoneId.of("Europe/Paris"));
+        String dateHeader = DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.FRENCH).format(now);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("HTTP/1.1 ").append(finalCode).append(" ").append(message).append("\r\n");
+        // headers obligatoires exo 5
+        sb.append("Date: ").append(dateHeader).append("\r\n");
+        sb.append("Server: ").append(SERVER_NAME).append("\r\n");
+        sb.append("Connection: close\r\n");
+        if (contentLength != null) {
+            sb.append("Content-Length: ").append(contentLength).append("\r\n");
+        }
+        sb.append("Content-Type: text/html\r\n");
+        sb.append("\r\n");
+        return sb.toString();
+    }
+
+    /**
+     * Traite un GET :
+     * - enlève ?query
+     * - décode %xx (URLDecoder)
+     * - refuse ".." (anti traversal)
+     * - "/" => "/index.html"
+     * - si dossier => ajoute "index.html"
+     * - absent => 404
+     * - sinon 200 + contenu fichier
+     *
+     * webRoot : dossier racine choisi via Host (exo 7)
+     */
+    private void parseAndRespond(String requestLine, PrintWriter out, OutputStream dataOut, String clientInfo, String webRoot) {
+         try {
             String[] parts = requestLine.split(" ");
             if (parts.length < 2) {
-                sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
+                sendErrorResponse(out, dataOut, 400, clientInfo);
                 return;
             }
 
             String method = parts[0];
             String path = parts[1];
 
-            // Sécurité: si jamais on arrive ici avec autre chose que GET
-            if (!"GET".equals(method)) {
-                sendErrorResponse(out, dataOut, 405, "Method Not Allowed", clientInfo);
+             // sécurité : si on arrive ici avec autre chose que GET
+             if (!"GET".equals(method)) {
+                sendErrorResponse(out, dataOut, 405, clientInfo);
                 return;
             }
 
-            // IMPORTANT: gérer le format TP "GET http://localhost:6666/foo.html HTTP/1.1"
-            if (path.startsWith("http://") || path.startsWith("https://")) {
+             // Cas "GET http://.../page.html HTTP/1.1"
+             if (path.startsWith("http://") || path.startsWith("https://")) {
                 try {
                     URI uri = URI.create(path);
-                    path = uri.getPath(); // ex: /index.html
+                    path = uri.getRawPath();
                     if (path == null || path.isEmpty()) path = "/";
                 } catch (IllegalArgumentException e) {
-                    sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
+                    sendErrorResponse(out, dataOut, 400, clientInfo);
                     return;
                 }
             }
 
-            if (path.equals("/") || path.isEmpty()) {
-                path = "/index.html";
+             // enlever la partie ?query
+             int q = path.indexOf("?");
+            if (q >= 0) path = path.substring(0, q);
+
+             // décoder %xx (version simple)
+             try {
+                path = java.net.URLDecoder.decode(path, "UTF-8");
+            } catch (Exception e) {
+                sendErrorResponse(out, dataOut, 400, clientInfo);
+                return;
             }
-
-            String filePath;
-            if (path.startsWith("/")) {
-                filePath = Server.WEB_ROOT + path;
-            } else {
-                filePath = Server.WEB_ROOT + "/" + path;
-            }
-
-            File file = new File(filePath);
-
-            // Tu as demandé: PAS de 404 -> donc fichier absent = 400
-            if (!file.exists() || !file.isFile()) {
-                sendErrorResponse(out, dataOut, 400, "Bad Request", clientInfo);
-                System.out.println("[" + clientInfo + "] Fichier absent (renvoyé 400): " + filePath);
+             // éviter de sortir du dossier du site
+            if (path.contains("..")) {
+                sendErrorResponse(out, dataOut, 400, clientInfo);
                 return;
             }
 
-            byte[] fileContent = Files.readAllBytes(file.toPath());
-            String contentType = getContentType(filePath);
+            // "/" => "/index.html"
+            if (path.equals("/") || path.isEmpty()) {
+                path = "/index.html";
+            }
+            // construire le chemin local selon le site choisi
+            String filePath = path.startsWith("/")
+                    ? webRoot + path
+                    : webRoot + "/" + path;
 
-            out.println("HTTP/1.1 200 OK");
-            out.println("Content-Type: " + contentType);
-            out.println("Content-Length: " + fileContent.length);
-            out.println("Connection: close");
-            out.println();
+            File file = new File(filePath);
+
+             // si c'est un dossier => index.html dedans
+             if (file.exists() && file.isDirectory()) {
+                file = new File(file, "index.html");
+            }
+             // absent => 404
+            if (!file.exists() || !file.isFile()) {
+                sendErrorResponse(out, dataOut, 404, clientInfo);
+                System.out.println("[" + clientInfo + "] 404 Not Found: " + file.getPath());
+                return;
+            }
+
+             // lecture + envoi du contenu
+             byte[] fileContent = Files.readAllBytes(file.toPath());
+
+            String header = buildHttpHeader(200, fileContent.length);
+            out.print(header);
             out.flush();
 
-            dataOut.write(fileContent);
-            dataOut.flush();
+             // Corps de la réponse = fichier
+             dataOut.write(fileContent);
+             dataOut.flush();
 
-            System.out.println("[" + clientInfo + "] 200 OK: " + filePath);
+            System.out.println("[" + clientInfo + "] 200 OK (" + webRoot + "): " + file.getPath());
 
         } catch (Exception e) {
             System.err.println("[ERREUR] [" + clientInfo + "] " + e.getMessage());
-            sendErrorResponse(out, dataOut, 500, "Internal Server Error", clientInfo);
+            sendErrorResponse(out, dataOut, 500, clientInfo);
         }
     }
-
-    private String getContentType(String filePath) {
-        if (filePath.endsWith(".html") || filePath.endsWith(".htm")) return "text/html; charset=UTF-8";
-        if (filePath.endsWith(".css")) return "text/css";
-        if (filePath.endsWith(".js")) return "application/javascript";
-        if (filePath.endsWith(".json")) return "application/json";
-        if (filePath.endsWith(".png")) return "image/png";
-        if (filePath.endsWith(".jpg") || filePath.endsWith(".jpeg")) return "image/jpeg";
-        if (filePath.endsWith(".gif")) return "image/gif";
-        if (filePath.endsWith(".txt")) return "text/plain";
-        return "application/octet-stream";
-    }
-
-    private void sendErrorResponse(PrintWriter out, OutputStream dataOut, int code, String message, String clientInfo) {
+    /**
+     * Envoie une page HTML d'erreur (400/404/405/500) avec un header conforme exo 5.
+     */
+    private void sendErrorResponse(PrintWriter out, OutputStream dataOut, int code, String clientInfo) {
         try {
-            String errorPage = "<!DOCTYPE html><html><head><title>Erreur " + code + "</title>" +
-                    "<style>body{font-family:Arial;text-align:center;padding:50px;}" +
-                    "h1{color:#d32f2f;}</style></head><body>" +
-                    "<h1>Erreur " + code + "</h1>" +
-                    "<p>" + message + "</p>" +
-                    "<hr><p>Serveur HTTP/1.1</p></body></html>";
+            String message = STATUS_MESSAGES.containsKey(code) ? STATUS_MESSAGES.get(code) : STATUS_MESSAGES.get(500);
+            int finalCode = STATUS_MESSAGES.containsKey(code) ? code : 500;
 
-            byte[] content = errorPage.getBytes("UTF-8");
+            String errorPage =
+                    "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Erreur " + finalCode + "</title>" +
+                            "<style>body{font-family:Arial;text-align:center;padding:50px;}" +
+                            "h1{color:#d32f2f;}</style></head><body>" +
+                            "<h1>Erreur " + finalCode + "</h1>" +
+                            "<p>" + message + "</p>" +
+                            "<hr><p>" + SERVER_NAME + "</p></body></html>";
 
-            out.println("HTTP/1.1 " + code + " " + message);
-            out.println("Content-Type: text/html; charset=UTF-8");
-            out.println("Content-Length: " + content.length);
-            out.println("Connection: close");
-            out.println();
+            byte[] content = errorPage.getBytes(StandardCharsets.UTF_8);
+
+            String header = buildHttpHeader(finalCode, content.length);
+            out.print(header);
             out.flush();
 
             dataOut.write(content);
             dataOut.flush();
 
-            System.out.println("[" + clientInfo + "] Erreur envoyée: " + code + " " + message);
+            System.out.println("[" + clientInfo + "] Erreur envoyée: " + finalCode + " " + message);
+
         } catch (IOException e) {
             System.err.println("[ERREUR] Impossible d'envoyer la réponse d'erreur: " + e.getMessage());
         }
