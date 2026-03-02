@@ -8,10 +8,10 @@ import java.nio.charset.StandardCharsets;
 
 public class POP {
 
-	private static final String POP_SERVER = "localhost";
-	private static final int POP_PORT = 25;
-	private static final String USERNAME = "test@localhost";
-	private static final String PASSWORD = "test";
+	private static final String POP_SERVER = "172.22.57.117";
+	private static final int POP_PORT = 110;
+	private static final String USERNAME = "asterix";
+	private static final String PASSWORD = "cedric";
 
 	public static void main(String[] args) {
 		try (Socket socket = new Socket(POP_SERVER, POP_PORT);

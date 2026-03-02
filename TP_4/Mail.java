@@ -9,9 +9,9 @@ import java.nio.charset.StandardCharsets;
 public class Mail {
 
 	private static final Contact[] CONTACTS = {
-		new Contact("Cedric", "cedric.momprive@etu.univ-lyon1.fr"),
-		new Contact("Amin", "amin.messaoudi@etu.univ-lyon1.fr"),
-		new Contact("Amin2", "darkfireyo@gmail.com")
+			new Contact("Cedric", "cedric.momprive@etu.univ-lyon1.fr"),
+			new Contact("Amin", "amin.messaoudi@etu.univ-lyon1.fr"),
+			new Contact("Amin2", "darkfireyo@gmail.com")
 	};
 
 	private static final String SENDER_EMAIL = "test@localhost";
@@ -32,7 +32,7 @@ public class Mail {
 					sendCommand(writer, reader, "DATA", 354);
 
 					String body = "Bonjour " + contact.name + "!\n\n"
-						+ "Ceci est un test d'email envoyé via un script Java.";
+							+ "Ceci est un test d'email envoyé via un script Java.";
 
 					writeDataLine(writer, "Subject: " + SUBJECT);
 					writeDataLine(writer, "From: " + SENDER_EMAIL);
@@ -67,7 +67,7 @@ public class Mail {
 	}
 
 	private static void sendCommand(BufferedWriter writer, BufferedReader reader, String command, int... expectedCodes)
-		throws IOException {
+			throws IOException {
 		writer.write(command + "\r\n");
 		writer.flush();
 		readResponse(reader, expectedCodes);
